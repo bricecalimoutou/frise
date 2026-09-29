@@ -8502,9 +8502,50 @@ setInterval(autosaveTick, AUTOSAVE_INTERVAL_MS);
   const CLE_SYNC = 'principal';
   let minuteurPush = null;
 
+  // Les photos (images encodées en base64 dans chaque événement) peuvent faire
+  // gonfler la sauvegarde à plusieurs dizaines de Mo, ce qui échoue silencieusement
+  // à l'envoi vers Supabase (requête beaucoup trop volumineuse). On les retire donc
+  // du contenu envoyé au cloud : seul le texte (dates, noms, liens...) est synchronisé
+  // entre appareils. Les photos restent disponibles localement et via export/import
+  // de fichier .json (qui, lui, conserve tout).
+  function retirerImages(events){
+    return (events || []).map(function(e){
+      if(!e || !e.image) return e;
+      const copie = Object.assign({}, e);
+      delete copie.image;
+      return copie;
+    });
+  }
+
+  function construirePayloadAllegePourCloud(){
+    const p = buildExportPayload();
+    const allege = Object.assign({}, p);
+    allege.events = retirerImages(p.events);
+    if(p.subTimelines){
+      const st = {};
+      Object.keys(p.subTimelines).forEach(function(id){
+        const sub = p.subTimelines[id] || {};
+        st[id] = Object.assign({}, sub, { events: retirerImages(sub.events) });
+      });
+      allege.subTimelines = st;
+    }
+    return allege;
+  }
+
+  // Réinjecte les photos locales (absentes du cloud) dans une liste d'événements
+  // reçue depuis Supabase, en se basant sur l'identifiant de chaque événement.
+  function reinjecterImagesLocales(nouveauxEvenements, anciensEvenements){
+    const images = new Map((anciensEvenements || []).filter(function(e){ return e && e.image; }).map(function(e){ return [e.id, e.image]; }));
+    if(!images.size) return nouveauxEvenements;
+    return (nouveauxEvenements || []).map(function(e){
+      if(e && !e.image && images.has(e.id)) return Object.assign({}, e, { image: images.get(e.id) });
+      return e;
+    });
+  }
+
   function appliquerPayloadFriseCloud(parsed){
     if(!parsed || !Array.isArray(parsed.events)) return;
-    EVENTS = parsed.events;
+    EVENTS = reinjecterImagesLocales(parsed.events, EVENTS);
     if(parsed.eras){
       Object.keys(ERAS).forEach(k=> delete ERAS[k]);
       Object.assign(ERAS, parsed.eras);
@@ -8527,7 +8568,18 @@ setInterval(autosaveTick, AUTOSAVE_INTERVAL_MS);
       Object.keys(ROLE_TYPES).forEach(k=> delete ROLE_TYPES[k]);
       Object.assign(ROLE_TYPES, parsed.roleTypes);
     }
-    SUB_TIMELINES = parsed.subTimelines || {};
+    {
+      const anciennesSousFrises = SUB_TIMELINES || {};
+      const nouvellesSousFrises = parsed.subTimelines || {};
+      SUB_TIMELINES = {};
+      Object.keys(nouvellesSousFrises).forEach(function(id){
+        const sub = nouvellesSousFrises[id] || {};
+        const ancienne = anciennesSousFrises[id];
+        SUB_TIMELINES[id] = Object.assign({}, sub, {
+          events: reinjecterImagesLocales(sub.events, ancienne ? ancienne.events : [])
+        });
+      });
+    }
     currentSubTimelineId = null;
     mainEvents = null; mainEras = null; mainActiveEras = null;
     const banniere = document.getElementById('subTimelineBanner');
@@ -8555,7 +8607,7 @@ setInterval(autosaveTick, AUTOSAVE_INTERVAL_MS);
   async function pousserVersCloudFrise(){
     if(!window.friseEstApprouve || !friseEstApprouve() || !window._friseClient) return;
     try{
-      const payload = buildExportPayload();
+      const payload = construirePayloadAllegePourCloud();
       const u = window.friseUtilisateurCourant;
       const { error } = await window._friseClient.from('frise_data').upsert({
         cle: CLE_SYNC,
