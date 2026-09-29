@@ -8604,8 +8604,17 @@ setInterval(autosaveTick, AUTOSAVE_INTERVAL_MS);
     markClean();
   }
 
+  function afficherStatutSync(msg){
+    window.__dernierStatutSyncFrise = msg;
+    const el = document.getElementById('unsavedText');
+    if(el) el.textContent = msg;
+  }
+
   async function pousserVersCloudFrise(){
-    if(!window.friseEstApprouve || !friseEstApprouve() || !window._friseClient) return;
+    if(!window.friseEstApprouve || !friseEstApprouve() || !window._friseClient){
+      afficherStatutSync('Synchro non tentée (' + (!window.friseEstApprouve ? 'fonction absente' : (!friseEstApprouve() ? 'compte non approuvé' : 'client absent')) + ')');
+      return;
+    }
     try{
       const payload = construirePayloadAllegePourCloud();
       const u = window.friseUtilisateurCourant;
@@ -8615,9 +8624,14 @@ setInterval(autosaveTick, AUTOSAVE_INTERVAL_MS);
         maj_le: new Date().toISOString(),
         maj_par: u ? u.id : null
       }, { onConflict: 'cle' });
-      if(!error) localStorage.setItem('_friseDernierSyncLe', new Date().toISOString());
+      if(!error){
+        localStorage.setItem('_friseDernierSyncLe', new Date().toISOString());
+        afficherStatutSync('Synchronisé à ' + new Date().toLocaleTimeString('fr-FR'));
+      } else {
+        afficherStatutSync('Erreur d\'envoi cloud : ' + (error.message || JSON.stringify(error)));
+      }
     } catch(err){
-      // pas de réseau : on retentera au prochain changement
+      afficherStatutSync('Exception envoi cloud : ' + (err && err.message ? err.message : String(err)));
     }
   }
 
@@ -8634,11 +8648,19 @@ setInterval(autosaveTick, AUTOSAVE_INTERVAL_MS);
         .select('valeur, maj_le')
         .eq('cle', CLE_SYNC)
         .maybeSingle();
-      if(error || !data || !data.valeur) return;
+      if(error){
+        afficherStatutSync('Erreur de lecture cloud : ' + (error.message || JSON.stringify(error)));
+        return;
+      }
+      if(!data || !data.valeur){
+        afficherStatutSync('Aucune donnée cloud pour le moment');
+        return;
+      }
       appliquerPayloadFriseCloud(data.valeur);
       if(data.maj_le) localStorage.setItem('_friseDernierSyncLe', data.maj_le);
+      afficherStatutSync('Récupéré du cloud à ' + new Date().toLocaleTimeString('fr-FR'));
     } catch(err){
-      // hors ligne : on continue avec les données locales
+      afficherStatutSync('Exception lecture cloud : ' + (err && err.message ? err.message : String(err)));
     }
   };
 
