@@ -7837,6 +7837,7 @@ document.getElementById('importFile').addEventListener('change', (e)=>{
       renderSubTimelineCheckboxes();
       render();
       markClean();
+      if(window.planifierPushFrise) planifierPushFrise();
       alert('Données importées avec succès.');
     } catch(err){
       alert('Impossible de lire ce fichier JSON.');
